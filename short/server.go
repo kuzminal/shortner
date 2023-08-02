@@ -27,8 +27,8 @@ func NewServer() *Server {
 
 func (s *Server) registerRoutes() {
 	mux := http.NewServeMux()
-	mux.HandleFunc(shorteningRoute, s.shorteningHandler)
-	mux.HandleFunc(resolveRoute, s.resolveHandler)
+	mux.Handle(shorteningRoute, httpio.Handler(s.shorteningHandler))
+	mux.Handle(resolveRoute, httpio.Handler(s.resolveHandler))
 	mux.HandleFunc(healthCheckRoute, s.healthCheckHandler)
 	s.mux = mux
 }
@@ -37,10 +37,9 @@ func (s *Server) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "OK")
 }
 
-func (s *Server) shorteningHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) shorteningHandler(w http.ResponseWriter, r *http.Request) http.Handler {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+		return httpio.Error(http.StatusMethodNotAllowed, "method not allowed")
 	}
 	var input struct {
 		URL string
@@ -48,38 +47,34 @@ func (s *Server) shorteningHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	err := httpio.Decode(http.MaxBytesReader(w, r.Body, 4_096), &input)
 	if err != nil {
-		http.Error(w, "cannot decode JSON", http.StatusBadRequest)
-		return
+		return httpio.Error(http.StatusBadRequest, "cannot decode JSON")
 	}
 	ln := link{
 		uri:      input.URL,
 		shortKey: input.Key,
 	}
 	if err := checkLink(ln); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return httpio.Error(http.StatusBadRequest, err.Error())
 	}
-	_ = httpio.Encode(w, http.StatusCreated, map[string]any{
+	return httpio.JSON(http.StatusCreated, map[string]any{
 		"key": ln.shortKey,
 	})
 }
 
-func (s *Server) resolveHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) resolveHandler(w http.ResponseWriter, r *http.Request) http.Handler {
 	key := r.URL.Path[len(resolveRoute):]
 
 	if err := checkShortKey(key); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return httpio.Error(http.StatusBadRequest, err.Error())
 	}
 	// use dummy data for now and carelessly expose internal details.
 	if key == "fortesting" {
-		http.Error(w, "db at IP ... failed", http.StatusInternalServerError)
-		return
+		return httpio.Error(http.StatusInternalServerError, "db at IP ... failed")
 	}
 	if key != "go" {
-		http.Error(w, linkit.ErrNotExist.Error(), http.StatusNotFound)
-		return
+		return httpio.Error(http.StatusNotFound, linkit.ErrNotExist.Error())
 	}
 	const uri = "https://go.dev"
 	http.Redirect(w, r, uri, http.StatusFound)
+	return nil
 }
